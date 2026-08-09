@@ -125,6 +125,7 @@ export default function App() {
   const applySettings = () => {
     updateSettings(draftSettings);
     setSettingsSaved(true);
+    setBannerDismissed(false);
     setTimeout(() => setSettingsSaved(false), 2000);
   };
 
@@ -151,6 +152,8 @@ export default function App() {
   const [loadingModifiers, setLoadingModifiers] = useState(true);
   const [loadingDiscounts, setLoadingDiscounts] = useState(true);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   // ── POS state ────────────────────────────────────────────────────────────────
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -237,6 +240,7 @@ export default function App() {
           modifiersApi.getAll(),
           discountsApi.getAll(),
         ]);
+        setBackendOnline(true);
         setItems(i);
         setCategories(c);
         setModifiers(m);
@@ -245,8 +249,8 @@ export default function App() {
           setNewItem(prev => ({ ...prev, category: c[0].name }));
           setNewModifier(prev => ({ ...prev, appliesTo: c[0].name }));
         }
-      } catch (err) {
-        console.error("Failed to load inventory data:", err);
+      } catch {
+        setBackendOnline(false);
       } finally {
         setLoadingItems(false);
         setLoadingCategories(false);
@@ -261,9 +265,10 @@ export default function App() {
     setLoadingAnalytics(true);
     try {
       const data = await analyticsApi.getSummary({ startDate, endDate });
+      setBackendOnline(true);
       setAnalytics(data);
-    } catch (err) {
-      console.error("Failed to load analytics:", err);
+    } catch {
+      setBackendOnline(false);
       setAnalytics(null);
     } finally {
       setLoadingAnalytics(false);
@@ -561,12 +566,24 @@ export default function App() {
 
   const EmptyAnalytics = () => (
     <div className="flex flex-col items-center justify-center py-24 gap-4">
-      <div className="w-16 h-16 rounded-2xl bg-muted/30 flex items-center justify-center">
-        <LayoutDashboard className="w-8 h-8 text-muted-foreground" />
+      <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${backendOnline === false ? "bg-destructive/10" : "bg-muted/30"}`}>
+        {backendOnline === false
+          ? <AlertTriangle className="w-8 h-8 text-destructive" />
+          : <LayoutDashboard className="w-8 h-8 text-muted-foreground" />
+        }
       </div>
       <div className="text-center">
-        <p className="text-sm font-medium mb-1">No sales data for this period</p>
-        <p className="text-xs text-muted-foreground">Complete sales to see analytics</p>
+        {backendOnline === false ? (
+          <>
+            <p className="text-sm font-medium mb-1">Backend not running</p>
+            <p className="text-xs text-muted-foreground">Start your backend server to see analytics data</p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-medium mb-1">No sales data for this period</p>
+            <p className="text-xs text-muted-foreground">Complete sales to see analytics</p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -834,6 +851,24 @@ export default function App() {
           </div>
         </div>
 
+        {/* ── Backend offline banner ─────────────────────────────────────────── */}
+        {backendOnline === false && !bannerDismissed && (
+          <div className="flex items-center gap-3 px-4 sm:px-6 lg:px-8 py-3 bg-warning/10 border-b border-warning/30 text-warning-foreground">
+            <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0" />
+            <p className="text-sm flex-1">
+              <span className="font-semibold">Backend unreachable</span>
+              {" — "}the API server could not be reached. Make sure your backend is running.
+            </p>
+            <button
+              onClick={() => setBannerDismissed(true)}
+              className="p-1 rounded-lg hover:bg-warning/20 transition-colors flex-shrink-0"
+              aria-label="Dismiss"
+            >
+              <X className="w-4 h-4 text-warning" />
+            </button>
+          </div>
+        )}
+
         <div className={currentView === "pos" ? "p-0 h-full" : "p-4 sm:p-6 lg:p-8"}>
 
           {/* ── POS View ───────────────────────────────────────────────────────── */}
@@ -873,13 +908,23 @@ export default function App() {
                 <div className="flex-1 overflow-auto min-h-0">
                   {loadingItems ? (
                     <LoadingSpinner />
+                  ) : backendOnline === false ? (
+                    <div className="flex flex-col items-center justify-center h-full gap-4 py-16">
+                      <div className="w-14 h-14 rounded-2xl bg-destructive/10 flex items-center justify-center">
+                        <AlertTriangle className="w-7 h-7 text-destructive" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-medium">Backend not running</p>
+                        <p className="text-xs text-muted-foreground mt-1">Start your backend server to load products</p>
+                      </div>
+                    </div>
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 sm:gap-3">
                       {filteredPosItems.map(item => (
                         <button
                           key={item._id}
                           onClick={() => addToCart(item)}
-                          disabled={item.stock === 0}
+                          disabled={item.stock === 0 || backendOnline === false}
                           className="bg-gradient-to-br from-card to-card/50 border border-border/50 p-4 rounded-2xl hover:shadow-lg hover:scale-105 transition-all duration-200 text-left group disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                         >
                           <div className="flex items-start justify-between mb-2">
@@ -1556,8 +1601,20 @@ export default function App() {
                         <tbody className="divide-y divide-border/30">
                           {filteredItems.length === 0 ? (
                             <tr>
-                              <td colSpan={8} className="px-6 py-12 text-center text-muted-foreground text-sm">
-                                No items found
+                              <td colSpan={8} className="px-6 py-16 text-center">
+                                {backendOnline === false ? (
+                                  <div className="flex flex-col items-center gap-3">
+                                    <div className="w-12 h-12 rounded-2xl bg-destructive/10 flex items-center justify-center mx-auto">
+                                      <AlertTriangle className="w-6 h-6 text-destructive" />
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-medium">Backend not running</p>
+                                      <p className="text-xs text-muted-foreground mt-1">Start your backend server to load inventory</p>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className="text-muted-foreground text-sm">No items found</p>
+                                )}
                               </td>
                             </tr>
                           ) : (
@@ -1853,7 +1910,7 @@ export default function App() {
               )}
             </div>
           )}
-        </div>
+
           {/* ── Settings View ─────────────────────────────────────────────────── */}
           {currentView === "settings" && (
             <div className="max-w-2xl mx-auto space-y-6 animate-in fade-in duration-500">
